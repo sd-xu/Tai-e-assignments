@@ -26,19 +26,14 @@ import pascal.taie.analysis.dataflow.analysis.AbstractDataflowAnalysis;
 import pascal.taie.analysis.graph.cfg.CFG;
 import pascal.taie.config.AnalysisConfig;
 import pascal.taie.ir.IR;
-import pascal.taie.ir.exp.ArithmeticExp;
-import pascal.taie.ir.exp.BinaryExp;
-import pascal.taie.ir.exp.BitwiseExp;
-import pascal.taie.ir.exp.ConditionExp;
-import pascal.taie.ir.exp.Exp;
-import pascal.taie.ir.exp.IntLiteral;
-import pascal.taie.ir.exp.ShiftExp;
-import pascal.taie.ir.exp.Var;
+import pascal.taie.ir.exp.*;
 import pascal.taie.ir.stmt.DefinitionStmt;
 import pascal.taie.ir.stmt.Stmt;
 import pascal.taie.language.type.PrimitiveType;
 import pascal.taie.language.type.Type;
 import pascal.taie.util.AnalysisException;
+
+import java.util.List;
 
 public class ConstantPropagation extends
         AbstractDataflowAnalysis<Stmt, CPFact> {
@@ -57,18 +52,28 @@ public class ConstantPropagation extends
     @Override
     public CPFact newBoundaryFact(CFG<Stmt> cfg) {
         // TODO - finish me
-        return null;
+        List<Var> var_list =  cfg.getIR().getParams();
+        CPFact cpFact = new CPFact();
+        var_list.forEach(var -> {
+            if (canHoldInt(var)) { // 将每个会被分析的方法的参数的值初始化为 NAC
+                cpFact.update(var, Value.getNAC());
+            }
+        });
+        return cpFact;
     }
 
     @Override
     public CPFact newInitialFact() {
         // TODO - finish me
-        return null;
+        return new CPFact();
     }
 
     @Override
     public void meetInto(CPFact fact, CPFact target) {
         // TODO - finish me
+        fact.forEach((key, value) -> {
+            target.update(key, meetValue(value, target.get(key)));
+        });
     }
 
     /**
@@ -76,13 +81,39 @@ public class ConstantPropagation extends
      */
     public Value meetValue(Value v1, Value v2) {
         // TODO - finish me
-        return null;
+        if(v1.isNAC() || v2.isNAC()) {
+            return Value.getNAC();
+        } else if (v1.isUndef()) {
+            return v2;
+        } else if (v2.isUndef()) {
+            return v1;
+        } else {
+            return v1.equals(v2) ? v1 : Value.getNAC();
+        }
     }
 
     @Override
     public boolean transferNode(Stmt stmt, CPFact in, CPFact out) {
         // TODO - finish me
-        return false;
+        if (stmt instanceof DefinitionStmt<?,?> definitionStmt) {
+            LValue lValue = definitionStmt.getLValue();
+            if (lValue instanceof Var lVar) { // 需要判断!!
+                final boolean[] flag = {false};
+                CPFact in_copy = in.copy();
+                in_copy.remove(lVar); // kill
+                in_copy.forEach((key, value) -> {
+                    if (out.update(key, value)) {
+                        flag[0] = true;
+                    }
+                });
+
+                if (canHoldInt(lVar) && out.update(lVar, evaluate(definitionStmt.getRValue(), in))) {
+                    flag[0] = true;
+                }
+                return flag[0];
+            }
+        }
+        return out.copyFrom(in);
     }
 
     /**
@@ -112,6 +143,61 @@ public class ConstantPropagation extends
      */
     public static Value evaluate(Exp exp, CPFact in) {
         // TODO - finish me
-        return null;
+        if (exp instanceof Var var) { // 变量
+            return canHoldInt(var) ? in.get(var) : Value.getNAC();
+        } else if (exp instanceof IntLiteral intLiteral) { // 字面量
+            return Value.makeConstant(intLiteral.getValue());
+        } else if (exp instanceof BinaryExp binaryExp) { // 二元运算
+            Value operand1 = evaluate(binaryExp.getOperand1(), in);
+            Value operand2 = evaluate(binaryExp.getOperand2(), in);
+            if ((binaryExp.getOperator() == ArithmeticExp.Op.DIV || binaryExp.getOperator() == ArithmeticExp.Op.REM)
+                    && operand2.isConstant() && operand2.getConstant() == 0) {
+                return Value.getUndef(); // 只要后者为0, 前面不管是什么都是undef
+            } else if (operand1.isNAC() || operand2.isNAC()) {
+                return Value.getNAC();
+            } else if (operand1.isConstant() && operand2.isConstant()) {
+                return binary_operation(binaryExp.getOperator(), operand1.getConstant(), operand2.getConstant());
+            } else {
+                return Value.getUndef();
+            }
+        }
+        return Value.getNAC();
+    }
+
+    public static Value binary_operation(BinaryExp.Op operator, int operand1, int operand2) {
+        int result = 0;
+        if (operator instanceof ArithmeticExp.Op arithmeticOp) {
+            result = switch (arithmeticOp) {
+                case ADD -> operand1 + operand2;
+                case SUB -> operand1 - operand2;
+                case MUL -> operand1 * operand2;
+                case DIV -> operand1 / operand2;
+                case REM -> operand1 % operand2;
+            };
+        } else if (operator instanceof ConditionExp.Op conditionOp) {
+            result = switch (conditionOp) {
+                case EQ -> (operand1 == operand2) ? 1 : 0;
+                case GE -> (operand1 >= operand2) ? 1 : 0;
+                case GT -> (operand1 > operand2) ? 1 : 0;
+                case LE -> (operand1 <= operand2) ? 1 : 0;
+                case LT -> (operand1 < operand2) ? 1 : 0;
+                case NE -> (operand1 != operand2) ? 1 : 0;
+            };
+        } else if (operator instanceof ShiftExp.Op shiftOp) {
+            result = switch (shiftOp) {
+                case SHL -> operand1 << operand2;
+                case SHR -> operand1 >> operand2;
+                case USHR -> operand1 >>> operand2;
+            };
+        } else if (operator instanceof BitwiseExp.Op bitwiseOp) {
+            result = switch (bitwiseOp) {
+                case OR -> operand1 | operand2;
+                case AND -> operand1 & operand2;
+                case XOR -> operand1 ^ operand2;
+            };
+        } else {
+            throw new AnalysisException("No such Operator: " + operator);
+        }
+        return Value.makeConstant(result);
     }
 }
