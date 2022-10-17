@@ -48,23 +48,40 @@ public class LiveVariableAnalysis extends
     @Override
     public SetFact<Var> newBoundaryFact(CFG<Stmt> cfg) {
         // TODO - finish me
-        return null;
+        return new SetFact<>();
     }
 
     @Override
     public SetFact<Var> newInitialFact() {
         // TODO - finish me
-        return null;
+        return new SetFact<>();
     }
 
     @Override
     public void meetInto(SetFact<Var> fact, SetFact<Var> target) {
         // TODO - finish me
+        target.union(fact);
     }
 
     @Override
     public boolean transferNode(Stmt stmt, SetFact<Var> in, SetFact<Var> out) {
         // TODO - finish me
-        return false;
+        SetFact<Var> out_copy = out.copy();
+        stmt.getDef().ifPresent(lValue -> {
+            if(lValue instanceof Var) { // 判断不可缺, 否则会出错！
+                out_copy.remove((Var) lValue);
+            }
+        }); // lValue最多只有一个
+        stmt.getUses().forEach(rValue -> {
+            if(rValue instanceof Var) {
+                out_copy.add((Var) rValue);
+            }
+        });
+        if (in.equals(out_copy)) {
+            return false; // 没变化
+        } else {
+            in.set(out_copy);
+            return true;
+        }
     }
 }
