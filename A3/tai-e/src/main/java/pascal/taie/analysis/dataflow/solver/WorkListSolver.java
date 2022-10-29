@@ -26,6 +26,8 @@ import pascal.taie.analysis.dataflow.analysis.DataflowAnalysis;
 import pascal.taie.analysis.dataflow.fact.DataflowResult;
 import pascal.taie.analysis.graph.cfg.CFG;
 
+import java.util.LinkedList;
+
 class WorkListSolver<Node, Fact> extends Solver<Node, Fact> {
 
     WorkListSolver(DataflowAnalysis<Node, Fact> analysis) {
@@ -35,10 +37,35 @@ class WorkListSolver<Node, Fact> extends Solver<Node, Fact> {
     @Override
     protected void doSolveForward(CFG<Node> cfg, DataflowResult<Node, Fact> result) {
         // TODO - finish me
+        LinkedList<Node> worklist = new LinkedList<>(cfg.getNodes());
+        while (!worklist.isEmpty()) {
+            Node node = worklist.pollFirst();
+            Fact in_fact = result.getInFact(node);
+            for (Node pred : cfg.getPredsOf(node)) {
+                analysis.meetInto(result.getOutFact(pred), in_fact);
+            }
+
+            if (analysis.transferNode(node, result.getInFact(node), result.getOutFact(node))) {
+                worklist.addAll(cfg.getSuccsOf(node));
+            }
+        }
     }
 
     @Override
     protected void doSolveBackward(CFG<Node> cfg, DataflowResult<Node, Fact> result) {
         // TODO - finish me
+        LinkedList<Node> worklist = new LinkedList<>(cfg.getNodes());
+        while (!worklist.isEmpty()) {
+//            Node node = worklist.pollLast(); // ?
+            Node node = worklist.pollFirst();
+            Fact out_fact = analysis.newInitialFact(); // 注意后向分析(用于活变量分析)中, out集是 in集并 的直接覆盖; 而前向分析(用于常量传播)中, meetinto只改变key对应的value, 不一样
+            for (Node succ :  cfg.getSuccsOf(node)) {
+                analysis.meetInto(result.getInFact(succ), out_fact);
+            }
+            result.setOutFact(node, out_fact); // 覆盖
+            if (analysis.transferNode(node, result.getInFact(node), result.getOutFact(node))) {
+                worklist.addAll(cfg.getPredsOf(node));
+            }
+        }
     }
 }
