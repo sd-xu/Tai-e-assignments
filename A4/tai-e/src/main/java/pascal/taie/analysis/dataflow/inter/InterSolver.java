@@ -24,8 +24,10 @@ package pascal.taie.analysis.dataflow.inter;
 
 import pascal.taie.analysis.dataflow.fact.DataflowResult;
 import pascal.taie.analysis.graph.icfg.ICFG;
+import pascal.taie.analysis.graph.icfg.ICFGEdge;
 import pascal.taie.util.collection.SetQueue;
 
+import java.util.LinkedList;
 import java.util.Queue;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -60,9 +62,35 @@ class InterSolver<Method, Node, Fact> {
 
     private void initialize() {
         // TODO - finish me
+        // 初始化程序中所有的 IN/OUT fact
+        for (Node node : icfg) {
+            result.setInFact(node, analysis.newInitialFact());
+            result.setOutFact(node, analysis.newInitialFact());
+        }
+        // 仅需对 ICFG 的 entry 方法的 entry 节点设置 boundary fact(覆盖前面的initial)
+        icfg.entryMethods().forEach(entryMethod -> {
+            Node entryNode = icfg.getEntryOf(entryMethod);
+            result.setInFact(entryNode, analysis.newBoundaryFact(entryNode));
+            result.setOutFact(entryNode, analysis.newBoundaryFact(entryNode));
+        });
     }
 
     private void doSolve() {
         // TODO - finish me
+        Queue<Node> workList = new LinkedList<>(icfg.getNodes());
+
+        while (!workList.isEmpty()) {
+            Node node = workList.poll();
+            Fact in = result.getInFact(node);
+            Fact out = result.getOutFact(node);
+            // 先对该节点的前驱的 OUT fact 应用 edge transfer，然后把得到结果 meet 进该节点的 IN fact
+            for (ICFGEdge<Node> edge : icfg.getInEdgesOf(node)) {
+                analysis.meetInto(analysis.transferEdge(edge, result.getOutFact(edge.getSource())), in);
+            }
+            // 如果发生了改变, 把所有后继加入WL
+            if (analysis.transferNode(node, in, out)) {
+                icfg.getSuccsOf(node).forEach(workList::offer);
+            }
+        }
     }
 }

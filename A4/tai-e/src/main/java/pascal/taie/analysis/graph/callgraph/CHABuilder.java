@@ -30,9 +30,7 @@ import pascal.taie.language.classes.JClass;
 import pascal.taie.language.classes.JMethod;
 import pascal.taie.language.classes.Subsignature;
 
-import java.util.ArrayDeque;
-import java.util.Queue;
-import java.util.Set;
+import java.util.*;
 
 /**
  * Implementation of the CHA algorithm.
@@ -51,6 +49,23 @@ class CHABuilder implements CGBuilder<Invoke, JMethod> {
         DefaultCallGraph callGraph = new DefaultCallGraph();
         callGraph.addEntryMethod(entry);
         // TODO - finish me
+        Queue<JMethod> workList = new LinkedList<>();
+        workList.add(entry);
+        while (!workList.isEmpty()) {
+            JMethod jMethod = workList.poll();
+            if (callGraph.contains(jMethod)) { // 在当前调用图已可达
+                continue;
+            }
+            callGraph.addReachableMethod(jMethod);
+
+            callGraph.callSitesIn(jMethod).forEach(callSite -> {
+                for (JMethod targetMethod : resolve(callSite)) {
+                    callGraph.addEdge(new Edge<>(CallGraphs.getCallKind(callSite), callSite, targetMethod));
+                    workList.add(targetMethod);
+                }
+            });
+        }
+
         return callGraph;
     }
 
@@ -59,7 +74,38 @@ class CHABuilder implements CGBuilder<Invoke, JMethod> {
      */
     private Set<JMethod> resolve(Invoke callSite) {
         // TODO - finish me
-        return null;
+        Set<JMethod> T = new HashSet<>();
+        MethodRef methodRef = callSite.getMethodRef();
+        // or use callSite.isStatic()
+        switch (CallGraphs.getCallKind(callSite)) {
+            case STATIC -> T.add(methodRef.getDeclaringClass().getDeclaredMethod(methodRef.getSubsignature()));
+            case SPECIAL -> {
+                JMethod jMethod = dispatch(methodRef.getDeclaringClass(), methodRef.getSubsignature());
+                if (jMethod != null) {
+                    T.add(jMethod);
+                }
+            }
+            case VIRTUAL, INTERFACE -> {
+                Queue<JClass> queue = new LinkedList<>();
+                queue.add(methodRef.getDeclaringClass());
+                while (!queue.isEmpty()) {
+                    JClass jClass = queue.poll();
+                    JMethod dispatchedMethod = dispatch(jClass, methodRef.getSubsignature());
+                    if (dispatchedMethod != null) {
+                        T.add(dispatchedMethod);
+                    }
+
+                    if (jClass.isInterface()) {
+                        queue.addAll(hierarchy.getDirectSubinterfacesOf(jClass));
+                        queue.addAll(hierarchy.getDirectImplementorsOf(jClass));
+                    } else {
+                        queue.addAll(hierarchy.getDirectSubclassesOf(jClass));
+                    }
+                }
+            }
+        }
+
+        return T;
     }
 
     /**
@@ -70,6 +116,13 @@ class CHABuilder implements CGBuilder<Invoke, JMethod> {
      */
     private JMethod dispatch(JClass jclass, Subsignature subsignature) {
         // TODO - finish me
-        return null;
+        JMethod jMethod = jclass.getDeclaredMethod(subsignature);
+        if (jMethod != null && !jMethod.isAbstract()) { // 找到对应方法且不是抽象方法
+            return jMethod;
+        } else if (jclass.getSuperClass() != null) { // 当前类里没有符合条件的方法, 若有父类, 去父类找
+            return dispatch(jclass.getSuperClass(), subsignature);
+        } else {
+            return null;
+        }
     }
 }
